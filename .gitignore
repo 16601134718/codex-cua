@@ -1,0 +1,18 @@
+# 运行时状态
+.cuad/
+*.jsonl
+img-*.jpg
+img-*.png
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# 本地配置
+.env
+.env.local
