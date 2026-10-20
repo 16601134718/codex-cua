@@ -8,6 +8,7 @@ cuad.py — Codex computer use 常驻会话客户端（含审批流）
 原始 MCP 响应保留在 .cuad/raw-<job>.json，图片仍需调用方 read_image。
 
 命令
+  doctor                         环境自检（推荐第一步）
   start                          启动常驻会话
   send '<js>'                    在会话里执行 JS（会等审批）
   send --bg '<js>'               后台执行，立即返回 job id
@@ -17,6 +18,8 @@ cuad.py — Codex computer use 常驻会话客户端（含审批流）
   policy                         查看/设置策略
   log                            审批审计日志
   status / stop
+  clean                          清理截图与队列
+  help                           显示本说明
 
 审批流说明
   MCP 服务端在需要确认时会发 elicitation/create 请求。本客户端：
@@ -545,10 +548,78 @@ def _send_raw(code, timeout, shot=False):
             "out": "调用达到期限，结果未知；未自动重放。请重新观察页面后决定下一步。"}
 
 
+def doctor():
+    """自检：确认运行环境、扩展连接与状态目录是否就绪。"""
+    ok = True
+
+    def chk(label, cond, detail="", fix=""):
+        nonlocal ok
+        mark = "OK  " if cond else "FAIL"
+        if not cond:
+            ok = False
+        print(f"[{mark}] {label}" + (f"  — {detail}" if detail else ""))
+        if not cond and fix:
+            print(f"       修复: {fix}")
+
+    print("codex-cua 自检\n" + "-" * 46)
+
+    # 1. 运行时目录
+    chk("运行时目录", os.path.isdir(ROOT), ROOT,
+        "安装 ChatGPT/Codex 桌面端，或设置 CUA_RUNTIME_DIR 指向其 cua_node 目录")
+    node_repl = os.path.join(ROOT, "bin", "node_repl")
+    if os.path.isdir(ROOT):
+        chk("node_repl 可执行", os.path.exists(node_repl), node_repl,
+            "运行时目录不完整，重装桌面端")
+
+    # 2. 扩展服务
+    chk("扩展服务目录", os.path.isdir(CP), CP,
+        "首次在 ChatGPT 里启用一次浏览器功能，或设置 CUA_BROWSER_SERVICE_DIR")
+
+    # 3. Sky 服务（原生 AX + 截图）
+    sky = os.path.join(HOME, ".codex", "computer-use", "Codex Computer Use.app")
+    chk("Sky 服务", os.path.exists(sky), sky,
+        "打开一次桌面端的 computer use 功能以完成注册")
+
+    # 4. 状态目录可写
+    try:
+        BASE.mkdir(parents=True, exist_ok=True)
+        probe = BASE / ".doctor-probe"
+        probe.write_text("1"); probe.unlink()
+        chk("状态目录可写", True, str(BASE))
+    except OSError as exc:
+        chk("状态目录可写", False, str(exc), "检查磁盘权限，或设置 CUAD_STATE_DIR")
+
+    # 5. 会话与扩展连接（需要真正跑一次）
+    try:
+        r = _send_raw('nodeRepl.write("EXT=" + (await cua.listBrowsers()).filter(b=>b.type==="extension").length)',
+                      30, shot=False)
+        out = r.get("out") or ""
+        m = re.search(r'EXT=(\d+)', out)
+        n = int(m.group(1)) if m else -1
+        chk("Chrome 扩展已连接", r.get("ok") and n > 0,
+            f"extension 浏览器 {n} 个" if n >= 0 else out[:80],
+            "打开 Chrome 并确认 ChatGPT/Codex 扩展已安装且启用")
+    except (OSError, RuntimeError) as exc:
+        chk("Chrome 扩展已连接", False, str(exc)[:90], "先执行 start 看具体报错")
+
+    # 6. 会话状态
+    print("-" * 46)
+    print(f"会话: {'运行中 pid=' + PIDF.read_text().strip() if PIDF.exists() else '未运行'}"
+          f"   策略: {policy()}   状态目录: {BASE}")
+    print("\n结论: " + ("全部就绪，可以直接用。" if ok else "存在未通过项，按上面的修复建议处理后重试。"))
+    return 0 if ok else 1
+
+
 def main():
     BASE.mkdir(parents=True, exist_ok=True)
     a = sys.argv[1:]
-    cmd = a[0] if a else "status"
+    cmd = a[0] if a else "help"
+
+    if cmd in ("help", "-h", "--help"):
+        print(__doc__); return 0
+
+    if cmd == "doctor":
+        return doctor()
 
     if cmd == "daemon":
         return daemon()

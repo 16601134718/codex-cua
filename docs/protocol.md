@@ -113,3 +113,46 @@ Browsers: Error: Missing required Codex turn metadata: session_id, turn_id
 | Sky（原生 AX + 截图） | launchd | SMAppService 注册，自动重启 |
 
 三者均不依赖 ChatGPT 应用进程，应用退出后仍可正常工作。
+
+## 客户端与 daemon 的队列协议
+
+客户端和 daemon 之间不通过网络通信，而是同一台机器上的两个 JSONL 文件。
+
+### 请求 `.cuad/req.jsonl`
+
+每行一条，追加写入：
+
+```json
+{"id": "a1b2c3", "code": "...js...", "deadline": 1234567.89, "shot": false}
+```
+
+`deadline` 是 `time.monotonic()` 的绝对时刻，不是相对时长 ——
+这样 daemon 排队期间也能正确计算剩余时间。
+
+### 响应 `.cuad/res.jsonl`
+
+```json
+{"id": "a1b2c3", "ok": true, "out": "...", "state": "completed"}
+```
+
+`state` 取值：`completed` / `failed` / `unknown`。
+
+`unknown` 表示期限内没拿到结果（daemon 崩溃、页面卡死、执行超时）。
+**调用方必须把它当成"可能已经生效"来处理**，重新观察后再决定，
+而不是当作失败重发。
+
+### 为什么用绝对 deadline
+
+早期版本用相对时长，daemon 重启后重放请求时会把总时长翻倍；
+改为绝对时刻后，重放不会延长总期限。
+
+### 原始响应
+
+完整的 MCP 响应（含图片 base64）留在 `.cuad/raw-<job>.json`，
+便于事后核对。图片本身不会塞进 `res.jsonl`。
+
+### 并发
+
+多个客户端可以同时写 `req.jsonl`（append 是原子的），
+但**同一份 JS 里的操作不会并发** —— daemon 串行执行。
+需要真正的并发要开多个会话，代价是会抢同一个 Chrome 窗口。

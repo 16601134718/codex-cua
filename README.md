@@ -36,14 +36,21 @@
 git clone <repo-url>
 cd codex-cua
 
+# 第一步：自检环境（推荐）
+python3 src/cuad.py doctor
+
+# 第二步：跑一次真实调用
 python3 src/cuad.py send --ms 90000 '
   const browsers = await cua.listBrowsers();
-  nodeRepl.write(browsers.filter(b => b.type === "extension").length);
+  nodeRepl.write("extension: " + browsers.filter(b => b.type === "extension").length);
 '
 ```
 
+`doctor` 会逐项检查运行时目录、扩展服务、Sky 服务、状态目录和扩展连接，
+并给出每一项的修复建议。全部 `OK` 即可直接使用。
+
 首次调用会自动启动常驻会话（约 4 秒），无需手动 `start`。
-输出为 `1` 表示扩展浏览器已连接。
+输出 `extension: 1` 表示扩展浏览器已连接。
 
 ---
 
@@ -52,6 +59,7 @@ python3 src/cuad.py send --ms 90000 '
 ### 命令行
 
 ```bash
+python3 src/cuad.py doctor                                  # 环境自检
 python3 src/cuad.py send --ms 90000 '<javascript>'          # 执行，默认不截图
 python3 src/cuad.py send --ms 90000 --shot '<javascript>'   # 附带截图
 python3 src/cuad.py run task.js --ms 180000                 # 执行 js 文件
@@ -104,20 +112,88 @@ await app.pressKey("Return");
 
 ---
 
-## 设计说明
+## 工作原理
 
-### 常驻会话
+### 整体结构
 
-`cua-repl` 在独立进程中长期运行，客户端通过 `.cuad/req.jsonl` 与 `.cuad/res.jsonl`
-交换消息。相比每次调用新建进程，该设计带来两项收益：
+```
+  你的 agent / 脚本
+        │  python3 src/cuad.py send '<js>'
+        ▼
+  ┌─────────────────────────────────────────┐
+  │  cuad.py（客户端，无状态）                │
+  │  · 写入 .cuad/req.jsonl                  │
+  │  · 轮询 .cuad/res.jsonl 取结果            │
+  └───────────────┬─────────────────────────┘
+                  │ 文件队列（同一台机器）
+                  ▼
+  ┌─────────────────────────────────────────┐
+  │  daemon：node cua-repl.mjs（常驻进程）    │
+  │  · 持有 MCP 会话                          │
+  │  · 持有 node_repl 的 JS 上下文            │
+  └───┬─────────────────────┬───────────────┘
+      │ MCP (stdio)         │ MCP (stdio)
+      ▼                     ▼
+  Chrome 扩展宿主        Sky 服务
+  （浏览器操作）        （原生 AX + 截图）
+  ← 由 Google Chrome 托管   ← 由 launchd 托管
+```
 
-- 避免重复的 MCP 初始化与首次连接开销
-- 保留 JavaScript 上下文，绑定对象可复用
+**三个进程互相独立**：客户端每次调用都是新进程，跑完就退出；
+`cua-repl` 常驻；Chrome 扩展宿主和 Sky 服务由系统托管，
+即便 ChatGPT 桌面端退出，它们仍在运行。
+
+### 为什么用文件队列而不是 HTTP
+
+daemon 与客户端之间用两个 append-only 的 JSONL 文件通信，原因有三：
+
+1. **无端口占用** —— 不需要监听端口，不会和别的服务冲突
+2. **跨进程无需握手** —— 客户端写一行就退出，不必维持连接
+3. **崩溃可诊断** —— 队列文件留在磁盘上，事后能看看到底发了什么
+
+### 为什么快：省掉的不是执行，是初始化
+
+每次新建 `cua-repl` 进程需要做 MCP `initialize` 握手、加载 `node_repl`、
+重新连扩展和 Sky —— 实测 **3 到 11 秒**。常驻之后这一步只在第一次发生。
+
+| | 每次新建进程 | 常驻会话 |
+| --- | --- | --- |
+| 热调用 | 3 – 11 s | **0.09 – 0.14 s** |
+| 首次调用 | 同左 | 3 – 9 s（仅一次） |
+
+### 为什么变量能跨调用存活
+
+`cua-repl` 内部跑的是 `node_repl` —— 一个**持久的 JavaScript 上下文**。
+`send` 执行的代码不是新脚本，而是往同一个上下文里追加执行。
+
+所以这成立：
+
+```bash
+# 第一次：建立绑定
+python3 src/cuad.py send 'globalThis.CUATAB = await cua.getTab(tabId, {browser:"1"})'
+
+# 第二次：直接用，不用重新绑定
+python3 src/cuad.py send 'nodeRepl.write(await CUATAB.url())'
+```
+
+这也是为什么 `--shot` 需要 `CUATAB`：截图时要知道拍哪个标签。
+
+### 一次调用的完整生命周期
+
+1. 客户端把 `{id, code, deadline, shot}` 追加到 `req.jsonl`
+2. 若 daemon 未运行，先拉起（约 4 秒），再重放**这一次**请求
+3. daemon 读出请求，通过 MCP `tools/call` 发给 `cua-repl`
+   （`_meta` 里带上 `x-codex-turn-metadata`）
+4. `cua-repl` 在持久上下文里执行，把结果写回 `res.jsonl`
+5. 客户端轮询拿到结果，打印输出；原始响应留在 `.cuad/raw-<job>.json`
+6. 超过 `--ms` 仍未返回 → 返回 `unknown`，**不重放**
 
 ### 崩溃恢复
 
 守护进程异常退出时，客户端返回 `unknown` 状态，**不会自动重放**。
 调用方应重新观察界面状态后自行决定后续动作。写操作重放可能造成重复提交。
+
+下一次 `send` 会自动重新拉起 daemon（不必手动 `start`）。
 
 ### 审批
 
@@ -233,6 +309,61 @@ globalThis.CUATAB = await cua.getTab(tabId, { browser: "1" });
 
 ---
 
+## 故障排查
+
+先跑 `python3 src/cuad.py doctor`，它会指出具体哪一项没过。
+
+### `extension: 0` 或提示扩展未连接
+
+Chrome 没有连接到扩展宿主。依次检查：
+
+1. Chrome 是否在运行
+2. ChatGPT / Codex 桌面端是否**至少启动过一次**（扩展宿主由它注册）
+3. `~/.codex/plugins/cache/openai-bundled/chrome/latest` 是否存在
+
+### `Missing required Codex turn metadata`
+
+`tools/call` 的 `_meta` 没有注入。见 [docs/protocol.md](docs/protocol.md) 的 `_meta` 注入一节。
+
+### 调用一直返回 `unknown`
+
+daemon 没能在期限内拿到结果。看 `.cuad/daemon.log` 尾部，
+常见原因：Chrome 崩了（所有 AppleScript / 点击调用会报"应用程序没有运行"）、
+网络中断、或前端页面卡住。
+
+### `Debugger unattached`
+
+站点主动断开了 CDP。只能退回原生 AX 通道（`cua.getApp`），
+详见 [docs/pitfalls.md](docs/pitfalls.md) 第 9 节。
+
+### 截图总是同一张
+
+没有设置 `CUATAB`，`--shot` 拍的是前台标签。见 pitfalls 第 7 节。
+
+### 状态目录越来越大
+
+`.cuad/` 下的截图不会自动清理，手动执行：
+
+```bash
+python3 src/cuad.py clean
+```
+
+---
+
+## 安全说明
+
+**这个工具的权限等于你自己的权限，请当做 shell 来对待。**
+
+- `send` 执行的是**任意 JavaScript**，跑在本机用户身份下，
+  能读写文件、发网络请求、操作任何可访问的界面
+- 默认 `policy manual`：服务端发起的每个审批请求都要你显式应答
+  （`answer accept`），超时按取消处理
+- `policy auto-safe` 不是"安全模式"，它只是对只读类请求免确认，
+  **写入类仍要人工应答**
+- 结果未知时**绝不重放**是安全语义，不是性能取舍 ——
+  重复提交、重复删除的代价远高于重试一次
+- 常驻会话的变量在进程存活期间一直保留，敏感值不要长期挂在全局
+
 ## 免责声明
 
 ```
@@ -251,7 +382,7 @@ globalThis.CUATAB = await cua.getTab(tabId, { browser: "1" });
 
 ```
 codex-cua/
-├── src/cuad.py          常驻会话客户端
+├── src/cuad.py          常驻会话客户端（含 doctor 自检）
 ├── docs/
 │   ├── pitfalls.md      已知问题详解
 │   └── protocol.md      MCP 交互与 _meta 注入
