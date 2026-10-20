@@ -33,7 +33,7 @@
 ## 快速开始
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/16601134718/codex-cua.git
 cd codex-cua
 
 # 第一步：自检环境（推荐）
