@@ -28,7 +28,15 @@
 
 在 DSH 的**插件市场**里搜索 `dsh-codex-cua`，点安装。
 
-### 通过命令行
+### 从 GitHub 直接安装（无需等 npm 发布）
+
+```bash
+dsh plugin --profile <你的 profile> add github:16601134718/dsh-codex-cua
+```
+
+可锁定提交：`github:16601134718/dsh-codex-cua#<sha>`
+
+### 从 npm 安装（发布后可用）
 
 ```bash
 dsh plugin --profile <你的 profile> add dsh-codex-cua
