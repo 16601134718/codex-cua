@@ -10,10 +10,10 @@ description: 通过原 Codex/ChatGPT 的 computer use 运行时（cua-repl + Chr
 ## 入口
 
 ```bash
-python3 src/cuad.py send --ms 90000 '<javascript>'        # 默认不截图
-python3 src/cuad.py send --ms 90000 --shot '<javascript>' # 附带截图
-python3 src/cuad.py run task.js --ms 180000               # 跑 js 文件
-python3 src/cuad.py stop / clean / status / policy / pending / log / jobs
+python3 ~/.dsh/skills/codex-cua/cuad.py send --ms 90000 '<javascript>'        # 默认不截图
+python3 ~/.dsh/skills/codex-cua/cuad.py send --ms 90000 --shot '<javascript>' # 附带截图
+python3 ~/.dsh/skills/codex-cua/cuad.py run task.js --ms 180000               # 跑 js 文件
+python3 ~/.dsh/skills/codex-cua/cuad.py stop / clean / status / policy / pending / log / jobs
 ```
 
 首次运行会**自动拉起**常驻会话（约 4 秒），不需要先 `start`。

@@ -2,7 +2,7 @@
 # 延迟测量脚本
 # 用法: bash bench/latency.sh [路径到 cuad.py]
 
-CUAD="${1:-src/cuad.py}"
+CUAD="${1:-assets/cuad.py}"
 cd "$(dirname "$0")/.." || exit 1
 
 echo "════════════════════════════════════════"

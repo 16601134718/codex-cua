@@ -1,0 +1,50 @@
+{
+  "name": "dsh-codex-cua",
+  "version": "0.1.0",
+  "description": "Bring Codex computer use into DeepSeek Harness: installs the codex-cua skill and its persistent session client so the agent can drive Chrome and native macOS apps through the original Codex runtime.",
+  "keywords": [
+    "deepseek-harness",
+    "deepseek-harness-plugin",
+    "dsh-plugin",
+    "computer-use",
+    "browser-automation",
+    "accessibility",
+    "macos",
+    "chrome",
+    "codex-cua",
+    "skill"
+  ],
+  "license": "MIT",
+  "author": "16601134718",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js"
+  },
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/16601134718/dsh-codex-cua.git"
+  },
+  "homepage": "https://github.com/16601134718/dsh-codex-cua#readme",
+  "bugs": {
+    "url": "https://github.com/16601134718/dsh-codex-cua/issues"
+  },
+  "scripts": {
+    "verify": "node scripts/verify.mjs"
+  }
+}

@@ -1,0 +1,6 @@
+# Mount dsh-codex-cua into a DSH profile.
+# The plugin installs the codex-cua skill (and its runtime client) into the
+# active DSH home so the agent can drive Codex computer use.
+- insert:
+    - id: codex-cua
+      name: dsh-codex-cua
